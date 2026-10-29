@@ -981,7 +981,7 @@
         }));
       };
 
-      
+    
 const finishExam = async (automatic = false) => {
   if (document.fullscreenElement) {
     document.exitFullscreen().catch(() => {});
@@ -990,26 +990,43 @@ const finishExam = async (automatic = false) => {
   setShowFinishModal(false);
   setPage('RESULT');
 
-  if (remoteAttemptId) {
+  if (!remoteAttemptId) {
+    setSyncMessage(
+      'Pengumpulan gagal: ID percobaan ujian tidak ditemukan.'
+    );
+    return;
+  }
+
+  try {
     const { data, error } = await supabase.rpc('submit_exam', {
       p_attempt_id: remoteAttemptId
     });
 
     if (error) {
-      console.error('Pengumpulan ujian gagal:', error);
+      console.error('Detail error submit_exam:', error);
       setSyncMessage(
-        'Hasil belum tersimpan di server. Silakan hubungi guru.'
+        'Pengumpulan gagal: ' + error.message
       );
-    } else {
-      console.log('Hasil ujian tersimpan:', data);
-      setSyncMessage(
-        automatic
-          ? 'Waktu habis. Hasil ujian berhasil dikirim ke server.'
-          : 'Hasil ujian berhasil dikirim ke server.'
-      );
+      return;
     }
+
+    console.log('Hasil ujian tersimpan:', data);
+
+    setSyncMessage(
+      automatic
+        ? 'Waktu habis. Hasil ujian berhasil dikirim ke server.'
+        : 'Hasil ujian berhasil dikirim ke server.'
+    );
+  } catch (err) {
+    console.error('Error pengumpulan ujian:', err);
+    setSyncMessage(
+      'Terjadi kesalahan: ' +
+      (err.message || String(err))
+    );
   }
 };
+  
+   
 
 
       const calculateResult = () => {
