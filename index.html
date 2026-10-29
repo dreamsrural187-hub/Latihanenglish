@@ -15,9 +15,6 @@
   <!-- Babel Standalone untuk kompilasi JSX di browser -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   
-  <!-- Supabase JS v2 -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
 </head>
@@ -26,15 +23,6 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    // ==========================================
-    // KONFIGURASI SUPABASE (kunci publishable aman untuk frontend)
-    // Jangan pernah memasukkan service_role/secret key ke file HTML.
-    // ==========================================
-    const SUPABASE_URL = 'https://anuejyonemczeronzzat.supabase.co';
-    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_MHfFXZfmij9s2KM1jBkJPQ_-rTRm-2V';
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
-    const EXAM_ID = '7027f662-c5db-4d37-9dc5-60d493a7444b';
-
     const { useState, useEffect } = React;
 
     // Helper untuk merender Lucide Icon di browser
@@ -846,46 +834,6 @@
 
       const [teacherPass, setTeacherPass] = useState('');
       const [isTeacherLoggedIn, setIsTeacherLoggedIn] = useState(false);
-      const [teacherEmail, setTeacherEmail] = useState('');
-      const [teacherPassword, setTeacherPassword] = useState('');
-      const [remoteAttemptId, setRemoteAttemptId] = useState(null);
-      const [supabaseUser, setSupabaseUser] = useState(null);
-      const [remoteAttempts, setRemoteAttempts] = useState([]);
-      const [syncMessage, setSyncMessage] = useState('Menghubungkan ke Supabase...');
-      const [isLoadingTeacherData, setIsLoadingTeacherData] = useState(false);
-
-      // Inisialisasi sesi Supabase. Siswa menggunakan anonymous sign-in; guru memakai email/password.
-      useEffect(() => {
-        let alive = true;
-        (async () => {
-          try {
-            const { data: { session }, error } = await supabase.auth.getSession();
-            if (error) throw error;
-            if (session?.user) {
-              if (alive) { setSupabaseUser(session.user); setSyncMessage('Terhubung ke Supabase.'); }
-              return;
-            }
-            const { data, error: signInError } = await supabase.auth.signInAnonymously();
-            if (signInError) throw signInError;
-            if (alive) { setSupabaseUser(data.user); setSyncMessage('Terhubung sebagai peserta.'); }
-            if (data.user) {
-              const { error: profileError } = await supabase.from('profiles').upsert(
-                { id: data.user.id, full_name: 'Peserta CBT', role: 'student' },
-                { onConflict: 'id', ignoreDuplicates: true }
-              );
-              // Profil yang sudah ada tidak perlu ditimpa; kegagalan dicatat di konsol untuk diagnosis.
-              if (profileError) console.warn('Profil peserta belum tersimpan:', profileError.message);
-            }
-          } catch (err) {
-            if (alive) setSyncMessage('Belum terhubung: ' + (err.message || 'periksa koneksi dan pengaturan Supabase.'));
-            console.error('Supabase init:', err);
-          }
-        })();
-        const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-          if (alive) setSupabaseUser(session?.user || null);
-        });
-        return () => { alive = false; listener.subscription.unsubscribe(); };
-      }, []);
 
       // Load Saved Progress
       useEffect(() => {
@@ -983,14 +931,12 @@
       }, [page]);
 
       const logViolation = (type) => {
-        const now = new Date();
-        const newLog = { id: Date.now(), timestamp: now.toLocaleTimeString('id-ID'), type };
+        const newLog = {
+          id: Date.now(),
+          timestamp: new Date().toLocaleTimeString('id-ID'),
+          type: type
+        };
         setViolations((prev) => [...prev, newLog]);
-        if (remoteAttemptId && supabaseUser) {
-          supabase.from('exam_violations').insert({
-            attempt_id: remoteAttemptId, event_type: type, occurred_at: now.toISOString(), details: { source: 'browser' }
-          }).then(({ error }) => { if (error) console.warn('Log pelanggaran belum tersinkron:', error.message); });
-        }
       };
 
       const triggerWarning = (msg) => {
@@ -1005,50 +951,26 @@
         }
       };
 
-      const handleStartExam = async (e) => {
+      const handleStartExam = (e) => {
         e.preventDefault();
-        if (!studentInfo.fullName || !studentInfo.studentNumber) { alert('Harap lengkapi nama dan nomor peserta!'); return; }
-        if (!supabaseUser) { alert('Koneksi Supabase belum siap. Tunggu beberapa saat lalu coba lagi.'); return; }
-        setSyncMessage('Menyimpan sesi ujian...');
-        try {
-          // Perbarui nama tampilan profil jika kebijakan database mengizinkan.
-          const { error: profileError } = await supabase.from('profiles').upsert(
-            { id: supabaseUser.id, full_name: studentInfo.fullName, role: 'student' },
-            { onConflict: 'id', ignoreDuplicates: true }
-          );
-          if (profileError) console.warn('Profil tidak diperbarui:', profileError.message);
-          const { data: examRow, error: examError } = await supabase.from('exams').select('id,is_active,duration_minutes').eq('id', EXAM_ID).maybeSingle();
-          if (examError) throw examError;
-          if (!examRow || !examRow.is_active) throw new Error('Ujian belum aktif atau data ujian tidak ditemukan di Supabase.');
-          const { data: attempt, error: attemptError } = await supabase.from('exam_attempts').insert({
-            exam_id: EXAM_ID, student_id: supabaseUser.id, student_name: studentInfo.fullName,
-            class_name: studentInfo.classGrade, started_at: new Date().toISOString(), status: 'in_progress'
-          }).select('id').single();
-          if (attemptError) throw attemptError;
-          setRemoteAttemptId(attempt.id);
-          setSyncMessage('Sesi ujian tersimpan di Supabase.');
-          setExamStartTime(Date.now());
-          setTimeLeft((examRow.duration_minutes || examSettings.durationMinutes) * 60);
-          setAnswers({}); setFlagged({}); setViolations([]);
-          setPage('EXAM'); enterFullscreen();
-        } catch (err) {
-          console.error('Gagal membuat sesi ujian:', err);
-          setSyncMessage('Gagal menyimpan sesi ujian: ' + (err.message || 'periksa kebijakan RLS.'));
-          alert('Ujian belum dimulai karena data sesi gagal disimpan ke Supabase. Detail: ' + (err.message || 'kesalahan tidak diketahui'));
+        if (!studentInfo.fullName || !studentInfo.studentNumber) {
+          alert('Harap lengkapi nama dan nomor peserta!');
+          return;
         }
+        setExamStartTime(Date.now());
+        setTimeLeft(examSettings.durationMinutes * 60);
+        setAnswers({});
+        setFlagged({});
+        setViolations([]);
+        setPage('EXAM');
+        enterFullscreen();
       };
 
-      const handleSelectAnswer = async (optionId) => {
-        const questionId = QUESTIONS_BANK[currentQuestionIndex].id;
-        setAnswers((prev) => ({ ...prev, [questionId]: optionId }));
-        // Skema saat ini hanya mengizinkan INSERT jawaban, belum UPDATE. Karena itu setiap perubahan
-        // jawaban dicatat sebagai baris baru; laporan guru harus memakai baris terbaru per nomor soal.
-        if (remoteAttemptId) {
-          const { error } = await supabase.from('student_answers').insert({
-            attempt_id: remoteAttemptId, question_number: questionId, selected_option: optionId, answered_at: new Date().toISOString()
-          });
-          if (error) { console.warn('Jawaban belum tersinkron:', error.message); setSyncMessage('Jawaban belum tersinkron: ' + error.message); }
-        }
+      const handleSelectAnswer = (optionId) => {
+        setAnswers((prev) => ({
+          ...prev,
+          [QUESTIONS_BANK[currentQuestionIndex].id]: optionId
+        }));
       };
 
       const handleToggleFlag = () => {
@@ -1059,21 +981,12 @@
         }));
       };
 
-      const finishExam = async (automatic = false) => {
-        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      const finishExam = () => {
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
         setShowFinishModal(false);
         setPage('RESULT');
-        if (remoteAttemptId) {
-          const res = calculateResult();
-          const { error } = await supabase.from('exam_attempts').update({
-            submitted_at: new Date().toISOString(), status: 'submitted', score: res.score,
-            correct_count: res.correct, wrong_count: res.wrong, unanswered_count: res.unanswered
-          }).eq('id', remoteAttemptId);
-          if (error) {
-            console.error('Pengumpulan remote belum berhasil:', error);
-            setSyncMessage('Hasil tampil di perangkat ini, tetapi status/nilai belum tersimpan ke server. Perlu kebijakan UPDATE/RPC yang aman di Supabase.');
-          } else setSyncMessage(automatic ? 'Waktu habis. Hasil dikirim ke Supabase.' : 'Hasil dikirim ke Supabase.');
-        }
       };
 
       const calculateResult = () => {
@@ -1101,37 +1014,6 @@
 
         const score = Math.round((correct / QUESTIONS_BANK.length) * 100);
         return { score, correct, wrong, unanswered, categoryStats };
-      };
-
-      const handleTeacherLogin = async (e) => {
-        e.preventDefault();
-        try {
-          const { data, error } = await supabase.auth.signInWithPassword({ email: teacherEmail.trim(), password: teacherPassword });
-          if (error) throw error;
-          const { data: profile, error: profileError } = await supabase.from('profiles').select('role').eq('id', data.user.id).maybeSingle();
-          if (profileError) throw profileError;
-          if (profile?.role !== 'teacher') { await supabase.auth.signOut(); throw new Error('Akun ini tidak memiliki peran guru.'); }
-          setIsTeacherLoggedIn(true); setTeacherPassword(''); setPage('TEACHER_DASHBOARD');
-          await loadTeacherAttempts();
-        } catch (err) { alert('Login guru gagal: ' + (err.message || 'periksa email dan kata sandi.')); }
-      };
-
-      const loadTeacherAttempts = async () => {
-        setIsLoadingTeacherData(true);
-        try {
-          const { data, error } = await supabase.from('exam_attempts').select('*').eq('exam_id', EXAM_ID).order('started_at', { ascending: false }).limit(200);
-          if (error) throw error;
-          setRemoteAttempts(data || []);
-          setSyncMessage('Berhasil memuat ' + (data || []).length + ' sesi dari Supabase.');
-        } catch (err) {
-          setSyncMessage('Data guru belum dapat dimuat: ' + (err.message || 'periksa RLS.'));
-          console.error('Memuat data guru:', err);
-        } finally { setIsLoadingTeacherData(false); }
-      };
-
-      const handleTeacherLogout = async () => {
-        await supabase.auth.signOut();
-        setIsTeacherLoggedIn(false); setRemoteAttempts([]); setPage('WELCOME');
       };
 
       const formatTime = (seconds) => {
@@ -1191,7 +1073,7 @@
                   </div>
                 </div>
                 <button 
-                  onClick={() => setPage('TEACHER_LOGIN')}
+                  onClick={() => setPage('TEACHER_DASHBOARD')}
                   className="text-xs md:text-sm bg-blue-800 hover:bg-blue-700 px-3 py-2 rounded-md transition flex items-center gap-1 border border-blue-600"
                 >
                   <Icon name="settings" className="w-4 h-4" /> Dashboard Guru
@@ -1199,7 +1081,6 @@
               </div>
             </header>
 
-            <div className="max-w-5xl w-full mx-auto px-4 pt-3 text-xs text-slate-600" role="status">Status Supabase: {syncMessage}</div>
             <main className="flex-1 max-w-5xl w-full mx-auto p-4 md:p-8 grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
               <div className="md:col-span-7 bg-white rounded-xl shadow-sm border border-slate-200 p-6">
                 <h2 className="text-xl font-bold text-blue-900 border-b pb-3 mb-5 flex items-center gap-2">
@@ -1543,7 +1424,6 @@
             </header>
 
             <main className="flex-1 max-w-5xl w-full mx-auto p-4 md:p-8 space-y-6">
-              <p className="text-xs text-slate-600" role="status">Status penyimpanan: {syncMessage}</p>
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
                 <div className="md:col-span-5 text-center border-b md:border-b-0 md:border-r border-slate-200 pb-6 md:pb-0 md:pr-6">
                   <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Nilai Akhir Ujian</p>
@@ -1577,50 +1457,23 @@
       }
 
       // ==========================================
-      // HALAMAN LOGIN GURU
-      // ==========================================
-      if (page === 'TEACHER_LOGIN') {
-        return (
-          <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-            <form onSubmit={handleTeacherLogin} className="bg-white rounded-xl shadow border border-slate-200 p-6 w-full max-w-md space-y-4">
-              <h1 className="text-xl font-bold text-slate-900">Login Dashboard Guru</h1>
-              <p className="text-sm text-slate-600">Gunakan akun guru yang sudah terdaftar di Supabase Auth.</p>
-              <div><label className="block text-sm font-semibold mb-1">Email guru</label><input type="email" required value={teacherEmail} onChange={e => setTeacherEmail(e.target.value)} className="w-full border rounded-lg p-3" autoComplete="username" /></div>
-              <div><label className="block text-sm font-semibold mb-1">Kata sandi</label><input type="password" required value={teacherPassword} onChange={e => setTeacherPassword(e.target.value)} className="w-full border rounded-lg p-3" autoComplete="current-password" /></div>
-              <button className="w-full bg-blue-700 text-white rounded-lg p-3 font-bold" type="submit">Masuk</button>
-              <button type="button" onClick={() => setPage('WELCOME')} className="w-full border rounded-lg p-3">Kembali ke halaman peserta</button>
-              <p className="text-xs text-slate-500">Status: {syncMessage}</p>
-            </form>
-          </div>
-        );
-      }
-
-      // ==========================================
       // HALAMAN 4: DASHBOARD GURU
       // ==========================================
       if (page === 'TEACHER_DASHBOARD') {
-        if (!isTeacherLoggedIn) return <div className="p-8 text-center">Sesi guru belum terverifikasi. <button className="underline" onClick={() => setPage('TEACHER_LOGIN')}>Login guru</button></div>;
         return (
           <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-800">
             <header className="bg-slate-900 text-white py-4 px-6 shadow">
               <div className="max-w-6xl mx-auto flex justify-between items-center">
                 <h1 className="font-bold text-lg">Panel Guru & Pengawas</h1>
-                <button onClick={handleTeacherLogout} className="bg-slate-800 text-xs px-3 py-2 rounded">Keluar</button>
+                <button onClick={() => setPage('WELCOME')} className="bg-slate-800 text-xs px-3 py-2 rounded">Kembali</button>
               </div>
             </header>
-            <main className="max-w-6xl w-full mx-auto p-4 md:p-6 space-y-4">
-              <div className="bg-white p-5 rounded-xl shadow space-y-3">
-                <h3 className="font-bold text-slate-800">Data Ujian dari Supabase</h3>
-                <p className="text-xs text-slate-600">{syncMessage}</p>
-                <div className="flex flex-wrap gap-2">
-                  <button onClick={loadTeacherAttempts} disabled={isLoadingTeacherData} className="bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded text-sm font-bold">{isLoadingTeacherData ? 'Memuat...' : 'Muat Ulang Data'}</button>
-                  <button onClick={exportToCSV} className="bg-emerald-600 text-white px-4 py-2 rounded text-sm font-bold flex items-center gap-2"><Icon name="download" className="w-4 h-4" /> Ekspor hasil lokal CSV</button>
-                </div>
-                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 p-3 rounded">Ekspor CSV yang ada masih berisi hasil pada perangkat/browser ini. Tabel berikut menampilkan sesi ujian yang berhasil dibaca dari server.</p>
-              </div>
-              <div className="bg-white rounded-xl shadow border overflow-x-auto">
-                <table className="w-full text-sm"><thead className="bg-slate-100"><tr><th className="p-3 text-left">Nama</th><th className="p-3 text-left">Kelas</th><th className="p-3 text-left">Mulai</th><th className="p-3 text-left">Status</th><th className="p-3 text-left">Nilai</th></tr></thead>
-                <tbody>{remoteAttempts.length ? remoteAttempts.map(a => <tr key={a.id} className="border-t"><td className="p-3">{a.student_name}</td><td className="p-3">{a.class_name}</td><td className="p-3">{a.started_at ? new Date(a.started_at).toLocaleString('id-ID') : '-'}</td><td className="p-3">{a.status}</td><td className="p-3">{a.score ?? '-'}</td></tr>) : <tr><td colSpan="5" className="p-4 text-center text-slate-500">Belum ada data atau data tidak dapat dibaca.</td></tr>}</tbody></table>
+            <main className="max-w-4xl mx-auto p-6">
+              <div className="bg-white p-6 rounded-xl shadow space-y-4">
+                <h3 className="font-bold text-slate-800">Ekspor Data Nilai</h3>
+                <button onClick={exportToCSV} className="bg-emerald-600 text-white px-4 py-2 rounded text-sm font-bold flex items-center gap-2">
+                  <Icon name="download" className="w-4 h-4" /> Unduh Laporan Nilai CSV
+                </button>
               </div>
             </main>
           </div>
