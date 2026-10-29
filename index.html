@@ -981,13 +981,36 @@
         }));
       };
 
-      const finishExam = () => {
-        if (document.fullscreenElement) {
-          document.exitFullscreen().catch(() => {});
-        }
-        setShowFinishModal(false);
-        setPage('RESULT');
-      };
+      
+const finishExam = async (automatic = false) => {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  }
+
+  setShowFinishModal(false);
+  setPage('RESULT');
+
+  if (remoteAttemptId) {
+    const { data, error } = await supabase.rpc('submit_exam', {
+      p_attempt_id: remoteAttemptId
+    });
+
+    if (error) {
+      console.error('Pengumpulan ujian gagal:', error);
+      setSyncMessage(
+        'Hasil belum tersimpan di server. Silakan hubungi guru.'
+      );
+    } else {
+      console.log('Hasil ujian tersimpan:', data);
+      setSyncMessage(
+        automatic
+          ? 'Waktu habis. Hasil ujian berhasil dikirim ke server.'
+          : 'Hasil ujian berhasil dikirim ke server.'
+      );
+    }
+  }
+};
+
 
       const calculateResult = () => {
         let correct = 0;
